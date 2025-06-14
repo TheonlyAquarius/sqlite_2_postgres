@@ -1,5 +1,13 @@
 **TL;DR – Run the one-liner below and you will get (a) a read-only safety copy of your `.db`, (b) an integrity-check/foreign-key log, and (c) a “feature inventory” text file listing every generated column, FTS5 table, `INTEGER PRIMARY KEY` alias, REAL-epoch field and JSON column.** After that you can move straight on to `pgloader` or the MySQL wizard without worrying about silent corruption or hidden SQLite-only quirks.
 
+## Prerequisites
+
+*   **Bash:** The script is written for Bash.
+*   **sqlite3:** The `sqlite3` command-line tool must be installed and available in your system's PATH.
+    *   On Debian/Ubuntu: `sudo apt update && sudo apt install sqlite3`
+    *   On macOS (using Homebrew): `brew install sqlite`
+    *   For other systems, please refer to your package manager or the official SQLite documentation.
+
 ```bash
 # --- sqlite_preflight.sh -------------------------------------------------
 #!/usr/bin/env bash
@@ -60,11 +68,12 @@ echo "✅ Pre-flight done.  Safe copy: $SAFE  |  Report: $LOG  |  Inventory: inv
 # ------------------------------------------------------------------------ 
 ```
 
-Save the file, make it executable (`chmod +x sqlite_preflight.sh`), then run:
+Save the file as `sqlite_preflight.sh`, make it executable (`chmod +x sqlite_preflight.sh`), then run:
 
 ```bash
-./sqlite_preflight.sh path/to/chat.db
+./sqlite_preflight.sh path/to/your_database.db
 ```
+Replace `path/to/your_database.db` with the actual path to your SQLite database file.
 
 ---
 
@@ -116,6 +125,20 @@ sqlite3 -readonly chat_readonly.db "SELECT name FROM sqlite_master WHERE type='t
 ```
 
 That’s it—you now have a bullet-proof, read-only source and a machine-generated checklist of SQLite-specific quirks, ready for a clean lift into PostgreSQL or MySQL.
+
+## Troubleshooting
+
+*   **`./sqlite_preflight.sh: command not found`**:
+    *   Make sure you've made the script executable: `chmod +x sqlite_preflight.sh`.
+    *   Ensure you are running it with `./` if it's in the current directory (e.g., `./sqlite_preflight.sh your_db.db`).
+*   **`Error: sqlite3 command not found. Please install sqlite3.`**:
+    *   This means the `sqlite3` tool is not installed or not in your PATH. Please see the "Prerequisites" section for installation instructions.
+*   **`cp: cannot stat 'your_db.db': No such file or directory`**:
+    *   The database file you specified does not exist at that path. Double-check the path to your database file.
+*   **`Error: Database integrity check failed.` (or similar message in the log file)**:
+    *   The script's log file (e.g., `preflight_YYYY-MM-DD_HHMM.log`) did not contain the expected "ok" from `PRAGMA integrity_check;`. This indicates potential corruption in your SQLite database. You **must** repair the database before attempting migration. Refer to SQLite documentation for repair options (e.g., `.recover` command in the SQLite shell).
+*   **Permissions errors when creating copy or logs**:
+    *   Ensure you have write permissions in the directory where you are running the script, as it needs to create a copy of the database and log files.
 
 [1]: https://linuxize.com/post/cp-command-in-linux/?utm_source=chatgpt.com "Cp Command in Linux (Copy Files)"
 [2]: https://www.tecmint.com/cp-command-examples/?utm_source=chatgpt.com "How to Use cp Command Effectively in Linux [14 Examples] - Tecmint"
