@@ -1,81 +1,81 @@
-# --- sqlite_preflight.sh -------------------------------------------------
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Check for command-line argument
-if [ "$#" -ne 1 ]; then
-    echo "Usage: ./sqlite_preflight.sh <database_file_path>"
-    exit 1
-fi
+# ------ 0. Preconditions -------------------------------------------------
+[[ $# -eq 1 ]] || { echo "Usage: $0 <database_file>"; exit 2; }
+command -v sqlite3 >/dev/null || { echo "sqlite3 not installed"; exit 2; }
 
-# Check for sqlite3 command
-if ! command -v sqlite3 &> /dev/null; then
-    echo "Error: sqlite3 command not found. Please install sqlite3."
-    exit 1
-fi
-
-DB="$1"                                   # chat.db (original)
+DB=$1
 STAMP=$(date +%F_%H%M)
-SAFE="${DB%.db}_readonly_$STAMP.db"        # chat_readonly_2025-06-13_1810.db
-LOG="preflight_${STAMP}.log"              # full diagnostic log
+SAFE="${DB%.db}_readonly_${STAMP}.db"
+LOG="preflight_${STAMP}.log"
+INV="inventory_${STAMP}.txt" # User's suggestion for inventory file variable
 
-# 1. Copy & lock down ----------------------------------------------------------------
-cp --preserve=timestamps "$DB" "$SAFE" || { echo "Error: Failed to copy the database file."; exit 1; }
-chmod 0444 "$SAFE" || { echo "Error: Failed to set permissions for the database file."; exit 1; }
+# ------ 1. Copy & lock ---------------------------------------------------
+cp --preserve=timestamps -- "$DB" "$SAFE"
+chmod 0444 -- "$SAFE"
 
-# 2. Integrity & FK enforcement -------------------------------------------------------
-if ! sqlite3 -readonly "$SAFE" <<'SQL' >"$LOG" 2>&1; then
-PRAGMA foreign_keys = ON;      -- enforce constraints for this session :contentReference[oaicite:2]{index=2}
-PRAGMA integrity_check;        -- deep corruption scan (prints “ok” if clean) :contentReference[oaicite:3]{index=3}
+# ------ 2. Integrity + FK check -----------------------------------------
+# Corrected heredoc placement and error message
+if ! sqlite3 -readonly "$SAFE" >"$LOG" 2>&1 <<'SQL'
+PRAGMA foreign_keys = ON;
+PRAGMA integrity_check;
 SQL
-    echo "Error: sqlite3 command failed during integrity check. Check $LOG for details."
+then
+    echo "sqlite3 threw an error during integrity/FK check; see $LOG" # Adjusted error message
     exit 1
 fi
 
-# Check if integrity check passed (sqlite3 prints "ok" on success)
-if ! grep -q "ok" "$LOG"; then
-    echo "Error: Database integrity check failed. Check $LOG for details."
+# Verify the single-line output is exactly "ok"
+# User's improved grep
+if ! grep -Fxq "ok" "$LOG"; then
+    echo "Integrity check failed; see $LOG"
     exit 1
 fi
 
-# 3. Feature inventory into separate file -------------------------------------------
-if ! sqlite3 -readonly "$SAFE" <<'SQL' > "inventory_${STAMP}.txt" 2>&1; then
+# ------ 3. Feature inventory --------------------------------------------
+# Corrected heredoc placement and error message
+if ! sqlite3 -readonly "$SAFE" >"$INV" 2>&1 <<'SQL'
 .headers on
 .mode column
--- Generated / hidden columns
+
+-- Generated columns
 SELECT tbl_name AS table_name
 FROM sqlite_master
-WHERE type='table'
-  AND sql LIKE '%GENERATED ALWAYS%';               -- detects stored generated cols :contentReference[oaicite:4]{index=4}
+WHERE type='table' AND sql LIKE '%GENERATED ALWAYS%';
 
 -- FTS5 virtual tables
 SELECT name AS fts5_table
 FROM sqlite_master
 WHERE type='table'
-  AND sql LIKE 'CREATE VIRTUAL TABLE%'
-  AND sql LIKE '%fts5%';                           -- FTS5 virtual tables :contentReference[oaicite:5]{index=5}
+  AND sql LIKE 'CREATE VIRTUAL TABLE%' AND sql LIKE '%fts5%';
 
--- INTEGER PRIMARY KEY aliases (rowid)
+-- Views (Re-integrated from our previous work)
+SELECT name AS view_name
+FROM sqlite_master
+WHERE type='view';
+
+-- INTEGER PRIMARY KEY aliases
 SELECT tbl_name AS table_name
 FROM sqlite_master
-WHERE sql LIKE '%INTEGER PRIMARY KEY%';           -- rowid alias inspection :contentReference[oaicite:6]{index=6}
+WHERE sql LIKE '%INTEGER PRIMARY KEY%';
 
--- REAL columns that look like Unix-epoch timestamps
-SELECT m.name AS table_name, p.name AS column_name
+-- REAL epoch columns
+SELECT m.name AS "table_name", p.name AS "column_name"
 FROM sqlite_master m
 JOIN pragma_table_info(m.name) p
 WHERE p.type='REAL'
   AND (p.name LIKE '%_time' OR p.name LIKE '%_timestamp');
 
--- Likely JSON blobs
-SELECT m.name, p.name
+-- JSON blobs
+SELECT m.name AS "table_name", p.name AS "column_name"
 FROM sqlite_master m
 JOIN pragma_table_info(m.name) p
-WHERE p.name LIKE '%_json' OR p.name LIKE '%json%'; -- spot JSON1 targets :contentReference[oaicite:7]{index=7}
+WHERE p.name LIKE '%_json' OR p.name LIKE '%json%';
 SQL
-    echo "Error: sqlite3 command failed during feature inventory. Check inventory_${STAMP}.txt for details."
+then
+    echo "sqlite3 failed during inventory; see $INV" # Adjusted error message
     exit 1
 fi
 
-echo "✅ Pre-flight done.  Safe copy: $SAFE  |  Report: $LOG  |  Inventory: inventory_${STAMP}.txt"
-# ------------------------------------------------------------------------
+echo "✅  Safe copy: $SAFE  |  Report: $LOG  |  Inventory: $INV"
